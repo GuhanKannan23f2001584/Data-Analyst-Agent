@@ -1,0 +1,7 @@
+__pycache__
+test*
+.env
+screenshot*
+temp*
+verify*
+*.json

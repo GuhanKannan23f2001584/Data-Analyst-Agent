@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+playwright
+requests
+beautifulsoup4
+python-multipart
+openai-whisper
+python-dotenv
+pandas
+langgraph
+langchain
+langchain-openai
+matplotlib
+seaborn
+scikit-learn
+networkx
+pillow
