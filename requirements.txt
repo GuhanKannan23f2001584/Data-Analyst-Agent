@@ -4,7 +4,7 @@ playwright
 requests
 beautifulsoup4
 python-multipart
-openai-whisper
+
 python-dotenv
 pandas
 langgraph

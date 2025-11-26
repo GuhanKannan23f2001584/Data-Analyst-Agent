@@ -18,7 +18,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Configuration ---
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+if not OPENROUTER_API_KEY:
+    raise ValueError("OPENROUTER_API_KEY not found in environment variables")
 
 # Initialize LLM
 llm = ChatOpenAI(
@@ -143,7 +145,7 @@ def analyze_vision(query: str) -> str:
             {
                 "type": "input_image",
                 "image_url": f"data:image/png;base64,{b64}",
-                "detail": "high"
+                "detail": "low"
             }
         ]}
     ]
@@ -156,18 +158,36 @@ def analyze_vision(query: str) -> str:
 @tool
 def transcribe_audio(url: str) -> str:
     """
-    Downloads audio from the URL and transcribes it using Whisper.
+    Downloads audio from the URL and transcribes it using the AI Pipe model.
     """
     print(f"👂 Transcribing: {url}")
     try:
-        import whisper
         resp = requests.get(url)
-        with open("temp_audio.opus", "wb") as f:
-            f.write(resp.content)
+        content_type = resp.headers.get('Content-Type', 'audio/mpeg')
+        if 'application/octet-stream' in content_type:
+            if url.endswith('.opus'): content_type = 'audio/ogg'
+            elif url.endswith('.mp3'): content_type = 'audio/mpeg'
+            elif url.endswith('.wav'): content_type = 'audio/wav'
             
-        model = whisper.load_model("base")
-        result = model.transcribe("temp_audio.opus")
-        return result["text"]
+        b64 = base64.b64encode(resp.content).decode("utf-8")
+        filename = os.path.basename(urlparse(url).path) or "audio.mp3"
+        
+        msg = [
+            {"role": "user", "content": [
+                {
+                    "type": "input_file",
+                    "filename": filename,
+                    "file_data": f"data:{content_type};base64,{b64}"
+                },
+                {
+                    "type": "text",
+                    "text": "Transcribe this audio file exactly."
+                }
+            ]}
+        ]
+        
+        res = vision_llm.invoke(msg)
+        return res.content
     except Exception as e:
         return f"Transcription Error: {e}"
 
