@@ -38,13 +38,8 @@ llm = ChatOpenAI(
 )
 
 
-AI_PIPE_API_KEY = os.getenv("AI_PIPE_API_KEY", "Dummy key ;/")
-vision_llm = ChatOpenAI(
-    openai_api_key=AI_PIPE_API_KEY,
-    openai_api_base="https://aipipe.org/openrouter/v1",
-    model_name="openai/gpt-5-nano",
-    temperature=0.1
-)
+# Vision LLM configuration moved to vision_analyst node using requests
+
 
 # --- State Definition ---
 class AgentState(TypedDict):
@@ -340,19 +335,38 @@ async def vision_analyst(state: AgentState):
         
     base64_image = encode_image(screenshot_path)
     
-    messages = [
-        SystemMessage(content="You are a vision analyst. Answer the question based on the image."),
-        HumanMessage(content=[
-            {"type": "text", "text": f"Analyze this image. The user needs to solve a quiz. Page text context: {state['page_content'][:200]}..."},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
-        ])
-    ]
+    # Using direct request to AI Pipe (OpenRouter endpoint)
+    ai_pipe_key = os.getenv("AI_PIPE_API_KEY", "")
+    if not ai_pipe_key:
+        return {"last_error": "AI_PIPE_API_KEY not found"}
+
+    url = "https://aipipe.org/openrouter/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {ai_pipe_key}",
+        "Content-Type": "application/json"
+    }
     
-    response = vision_llm.invoke(messages)
-    analysis = response.content
-    print(f"Vision Analysis: {analysis}")
+    payload = {
+        "model": "openai/gpt-5-nano",
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": f"Analyze this image. The user needs to solve a quiz. Page text context: {state['page_content'][:200]}..."},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+            ]}
+        ],
+        "temperature": 0.1
+    }
     
-    return {"vision_analysis": analysis}
+    try:
+        resp = requests.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        result = resp.json()
+        analysis = result["choices"][0]["message"]["content"]
+        print(f"Vision Analysis: {analysis}")
+        return {"vision_analysis": analysis}
+    except Exception as e:
+        print(f"Vision Analysis Error: {e}")
+        return {"last_error": str(e)}
 
 async def code_interpreter(state: AgentState):
     print("--- CODE INTERPRETER: Generating/Executing code ---")

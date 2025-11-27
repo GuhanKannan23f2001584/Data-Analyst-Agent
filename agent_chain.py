@@ -30,14 +30,7 @@ llm = ChatOpenAI(
     temperature=0.1
 )
 
-
-AI_PIPE_API_KEY = os.getenv("AI_PIPE_API_KEY", "Dummy key ;/")
-vision_llm = ChatOpenAI(
-    openai_api_key=AI_PIPE_API_KEY,
-    openai_api_base="https://aipipe.org/openrouter/v1",
-    model_name="openai/gpt-5-nano",
-    temperature=0.1
-)
+# Vision and Audio LLM configurations are moved to their respective tools using requests
 
 # --- 1. Define State (Memory) ---
 # As per docs: "Custom state schemas must extend AgentState as a TypedDict"
@@ -108,6 +101,7 @@ def python_repl(code: str) -> str:
     The code MUST print the final answer to stdout.
     """
     print("💻 Executing Code...")
+    print(f"--- CODE START ---\n{code}\n--- CODE END ---")
     try:
         # We run this in a subprocess to ensure clean state
         result = subprocess.run(
@@ -116,6 +110,7 @@ def python_repl(code: str) -> str:
             text=True, 
             timeout=30
         )
+        print("result", result)
         if result.returncode == 0:
             return f"STDOUT:\n{result.stdout}"
         else:
@@ -136,24 +131,37 @@ def analyze_vision(query: str) -> str:
     with open("screenshot.png", "rb") as img:
         b64 = base64.b64encode(img.read()).decode("utf-8")
         
-    # Using a direct call to a vision model here since the tool simply returns text
-    # In a real setup, you might use a specific vision model instance
-    # Using global vision_llm
-    msg = [
-        {"role": "user", "content": [
-            {"type": "text", "text": f"Answer this question based on the image: {query}"},
-            {
-                "type": "input_image",
-                "image_url": f"data:image/png;base64,{b64}",
-                "detail": "low"
-            }
-        ]}
-    ]
+    # Using direct request to AI Pipe (OpenRouter endpoint)
+    ai_pipe_key = os.getenv("AI_PIPE_API_KEY", "")
+    if not ai_pipe_key:
+        return "Error: AI_PIPE_API_KEY not found."
 
-    print(msg)
+    url = "https://aipipe.org/openrouter/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {ai_pipe_key}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": "openai/gpt-5-nano",
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": f"Answer this question based on the image: {query}"},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+            ]}
+        ],
+        "temperature": 0.1
+    }
 
-    res = vision_llm.invoke(msg)
-    return res.content
+    try:
+        resp = requests.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        result = resp.json()
+        content = result["choices"][0]["message"]["content"]
+        print(f"👁️ Vision Result: {content}")
+        return content
+    except Exception as e:
+        return f"Vision Analysis Error: {e}"
 
 @tool
 def transcribe_audio(url: str) -> str:
@@ -163,31 +171,60 @@ def transcribe_audio(url: str) -> str:
     print(f"👂 Transcribing: {url}")
     try:
         resp = requests.get(url)
-        content_type = resp.headers.get('Content-Type', 'audio/mpeg')
-        if 'application/octet-stream' in content_type:
-            if url.endswith('.opus'): content_type = 'audio/ogg'
-            elif url.endswith('.mp3'): content_type = 'audio/mpeg'
-            elif url.endswith('.wav'): content_type = 'audio/wav'
+        # Robust mime type detection
+        path = urlparse(url).path
+        if path.endswith('.opus'):
+            content_type = 'audio/ogg'
+        elif path.endswith('.mp3'):
+            content_type = 'audio/mpeg'
+        elif path.endswith('.wav'):
+            content_type = 'audio/wav'
+        else:
+            content_type = resp.headers.get('Content-Type', 'audio/mpeg')
             
         b64 = base64.b64encode(resp.content).decode("utf-8")
         filename = os.path.basename(urlparse(url).path) or "audio.mp3"
         
-        msg = [
-            {"role": "user", "content": [
-                {
-                    "type": "input_file",
-                    "filename": filename,
-                    "file_data": f"data:{content_type};base64,{b64}"
-                },
-                {
-                    "type": "text",
-                    "text": "Transcribe this audio file exactly."
-                }
-            ]}
-        ]
+        # Using direct request to AI Pipe (Gemini endpoint)
+        ai_pipe_key = os.getenv("AI_PIPE_API_KEY", "")
+        if not ai_pipe_key:
+            return "Error: AI_PIPE_API_KEY not found."
+
+        # Gemini Native API via AI Pipe
+        url = "https://aipipe.org/geminiv1beta/models/gemini-2.0-flash-lite:generateContent"
         
-        res = vision_llm.invoke(msg)
-        return res.content
+        headers = {
+            "Authorization": f"Bearer {ai_pipe_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": "Please transcribe this audio file."},
+                    {
+                        "inline_data": {
+                            "mime_type": content_type,
+                            "data": b64
+                        }
+                    }
+                ]
+            }]
+        }
+        
+        print("Waiting for transcription result...")
+        resp = requests.post(url, headers=headers, json=payload)
+        
+        if resp.status_code != 200:
+            return f"Transcription API Error: {resp.status_code} - {resp.text}"
+            
+        result = resp.json()
+        try:
+            text = result["candidates"][0]["content"]["parts"][0]["text"]
+            print(f"👂 Transcription Result: {text}")
+            return text
+        except (KeyError, IndexError) as e:
+            return f"Error parsing transcription response: {result} - {e}"
     except Exception as e:
         return f"Transcription Error: {e}"
 
@@ -204,23 +241,43 @@ def analyze_file(url: str, query: str) -> str:
         b64 = base64.b64encode(resp.content).decode("utf-8")
         filename = os.path.basename(urlparse(url).path) or "file.dat"
         
-        # Construct message for vision LLM (gpt-5) with input_file
-        msg = [
-            {"role": "user", "content": [
-                {
-                    "type": "input_file",
-                    "filename": filename,
-                    "file_data": f"data:{content_type};base64,{b64}"
-                },
-                {
-                    "type": "text",
-                    "text": query
-                }
-            ]}
-        ]
+        # Using direct request to AI Pipe (OpenRouter endpoint for vision/file analysis)
+        ai_pipe_key = os.getenv("AI_PIPE_API_KEY", "")
+        if not ai_pipe_key:
+            return "Error: AI_PIPE_API_KEY not found."
+
+        url = "https://aipipe.org/openrouter/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {ai_pipe_key}",
+            "Content-Type": "application/json"
+        }
         
-        res = vision_llm.invoke(msg)
-        return res.content
+        payload = {
+            "model": "openai/gpt-5-nano",
+            "messages": [
+                {"role": "user", "content": [
+                    {
+                        "type": "text",
+                        "text": f"Analyze this file: {query}"
+                    },
+                    {
+                        "type": "file", # Assuming support or fallback
+                        "file": {
+                            "filename": filename,
+                            "file_data": f"data:{content_type};base64,{b64}"
+                        }
+                    }
+                ]}
+            ],
+            "temperature": 0.1
+        }
+        
+        resp = requests.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        result = resp.json()
+        content = result["choices"][0]["message"]["content"]
+        print(f"📂 File Analysis Result: {content}")
+        return content
     except Exception as e:
         return f"File Analysis Error: {e}"
 
@@ -238,9 +295,11 @@ def submit_answer(submission_url: str, quiz_url: str, email: str, secret: str, a
         "url": quiz_url, 
         "answer": answer
     }
+    print("payload", payload)
     
     try:
         resp = requests.post(submission_url, json=payload)
+        print(f"🚀 Submission Response: {resp.json()}")
         return json.dumps(resp.json())
     except Exception as e:
         return f"Network Error: {e}"
@@ -265,6 +324,7 @@ sys_prompt = """You are an automated quiz solver.
    - If `submit_answer` returns {"correct": true}, extracting the 'next_url' or 'url' from the response.
    - Output the phrase "NEXT_URL: <url>" as your final response so the loop can continue.
    - If it returns false, read the reason and try again.
+8. When you call the `transcribe_audio` tool wait until it returns a answer before proceeding.
 """
 
 # Create the agent using the syntax from your docs
@@ -281,7 +341,7 @@ def solve_quiz(start_url, email, secret):
     current_url = start_url
     
     while True:
-        print(f"\n--- 🏁 Starting Level: {current_url} ---")
+        print(f"\\n--- 🏁 Starting Level: {current_url} ---")
         
         # Invoke the agent
         # We pass the state elements required by our QuizState TypedDict
