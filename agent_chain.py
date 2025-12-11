@@ -26,7 +26,8 @@ if not OPENROUTER_API_KEY:
 llm = ChatOpenAI(
     openai_api_key=OPENROUTER_API_KEY,
     openai_api_base="https://openrouter.ai/api/v1",
-    model_name="x-ai/grok-4.1-fast",
+    #model_name="x-ai/grok-4.1-fast",
+    model_name="mistralai/devstral-2512:free",
     temperature=0.1
 )
 
