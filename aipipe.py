@@ -15,7 +15,7 @@ def get_profile():
     """
     return {"token": OPENROUTER_API_KEY}
 
-def chat_completion(messages, model="mistralai/devstral-2512:free"):
+def chat_completion(messages, model="google/gemini-2.0-flash-exp:free"):
     """
     Sends a chat completion request to OpenRouter.
     """
