@@ -27,7 +27,7 @@ llm = ChatOpenAI(
     openai_api_key=OPENROUTER_API_KEY,
     openai_api_base="https://openrouter.ai/api/v1",
     #model_name="x-ai/grok-4.1-fast",
-    model_name="mistralai/devstral-2512:free",
+    model_name="google/gemini-2.0-flash-exp:free",
     temperature=0.1
 )
 
