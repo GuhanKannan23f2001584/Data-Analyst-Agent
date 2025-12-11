@@ -15,7 +15,7 @@ def get_profile():
     """
     return {"token": OPENROUTER_API_KEY}
 
-def chat_completion(messages, model="x-ai/grok-4.1-fast"):
+def chat_completion(messages, model="mistralai/devstral-2512:free"):
     """
     Sends a chat completion request to OpenRouter.
     """
